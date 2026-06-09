@@ -1,0 +1,786 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>来店集計</title>
+<script>
+  // 公開時(localhost以外)のみパスワードゲートを表示。早期にクラスを付けて画面のちらつきを防ぐ。
+  (function(){
+    var local = /^(localhost|127\.0\.0\.1|)$/.test(location.hostname);
+    var authed=false; try{ authed = localStorage.getItem("raitenAuthed")==="1"; }catch(e){}
+    if(!local && !authed){ document.documentElement.className += " needauth"; }
+  })();
+</script>
+<style>
+  :root{
+    --bg:#0f1216; --panel:#171c23; --panel2:#1e242d; --line:#2a323d;
+    --txt:#e8edf2; --sub:#9aa7b4; --accent:#4ea1ff; --accent2:#ffb24e;
+    --good:#3ecf8e; --danger:#ff6b6b; --bar:#4ea1ff; --bar2:#2a3a4f;
+  }
+  /* パスワードゲート（公開時のみ） */
+  #gate{position:fixed; inset:0; background:var(--bg); z-index:9999; display:none; align-items:center; justify-content:center;}
+  html.needauth #gate{display:flex;}
+  #gateBox{background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:28px 26px; width:320px; max-width:90vw; text-align:center;}
+  #gateBox h2{margin:0 0 14px; font-size:18px;}
+  #gateBox input{width:100%; background:var(--panel2); border:1px solid var(--line); color:var(--txt); border-radius:8px; padding:10px 12px; font-size:15px; margin-bottom:10px;}
+  #gateBox button{width:100%; background:var(--accent); color:#06223f; border:none; border-radius:8px; padding:10px; font-size:15px; font-weight:700; cursor:pointer;}
+  #gateErr{color:var(--danger); font-size:13px; min-height:18px; margin-top:8px;}
+  *{box-sizing:border-box;}
+  body{
+    margin:0; background:var(--bg); color:var(--txt);
+    font-family:"Segoe UI","Hiragino Kaku Gothic ProN","Yu Gothic UI",Meiryo,sans-serif;
+    line-height:1.6; padding:24px;
+  }
+  h1{font-size:22px; margin:0 0 4px;}
+  .muted{color:var(--sub); font-size:13px;}
+  .wrap{max-width:1000px; margin:0 auto;}
+
+  /* ドロップゾーン */
+  #drop{
+    margin:20px 0; border:2px dashed var(--line); border-radius:14px;
+    padding:40px 20px; text-align:center; background:var(--panel);
+    transition:.15s; cursor:pointer;
+  }
+  #drop.hover{border-color:var(--accent); background:#1b2430;}
+  #drop.compact{padding:14px; text-align:left;}
+  #drop .big{font-size:17px; font-weight:600;}
+  #drop .sub{color:var(--sub); font-size:13px; margin-top:6px;}
+
+  .cards{display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin:18px 0;}
+  .card{background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:14px 16px;}
+  .card .label{color:var(--sub); font-size:12px;}
+  .card .num{font-size:28px; font-weight:700; margin-top:2px;}
+  .card .num small{font-size:14px; font-weight:500; color:var(--sub);}
+
+  section{background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:18px 20px; margin:16px 0;}
+  section h2{font-size:16px; margin:0 0 14px; display:flex; align-items:center; gap:8px;}
+  section h2 .tag{font-size:11px; color:var(--sub); font-weight:400;}
+
+  /* 棒グラフ（テーブル形式） */
+  table{width:100%; border-collapse:collapse; font-size:14px;}
+  th,td{padding:7px 8px; text-align:left;}
+  th{color:var(--sub); font-weight:500; font-size:12px; border-bottom:1px solid var(--line);}
+  td{border-bottom:1px solid #20262f;}
+  .barcell{width:55%;}
+  .bar{height:20px; border-radius:5px; background:var(--bar); min-width:2px; display:inline-block; vertical-align:middle;}
+  .num-r{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap;}
+  .w7{color:var(--accent2);} /* 土日強調用 */
+
+  /* 設定 */
+  .ctl{display:flex; flex-wrap:wrap; gap:16px; align-items:center; margin-bottom:6px;}
+  .ctl label{font-size:13px; color:var(--txt); display:flex; align-items:center; gap:6px; cursor:pointer;}
+  input[type=number]{width:54px; background:var(--panel2); border:1px solid var(--line); color:var(--txt); border-radius:6px; padding:4px 6px;}
+  input[type=text]{background:var(--panel2); border:1px solid var(--line); color:var(--txt); border-radius:6px; padding:6px 8px; width:100%;}
+
+  /* サクラ名簿 */
+  .names{display:grid; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:6px; max-height:340px; overflow:auto; margin-top:10px; padding-right:4px;}
+  .name-row{display:flex; align-items:center; gap:8px; background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:6px 9px; font-size:13px;}
+  .name-row.excl{opacity:.5; border-color:var(--danger);}
+  .name-row input{transform:scale(1.15);}
+  .name-row .cnt{margin-left:auto; color:var(--sub); font-variant-numeric:tabular-nums;}
+  .name-row .nm{overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .name-row .id{color:#5c6773; font-size:11px;}
+
+  .pill{display:inline-block; background:var(--danger); color:#fff; border-radius:20px; padding:2px 10px; font-size:12px; margin:3px 5px 0 0;}
+  .pill b{font-weight:700;}
+  button{background:var(--panel2); color:var(--txt); border:1px solid var(--line); border-radius:8px; padding:7px 12px; cursor:pointer; font-size:13px;}
+  button:hover{border-color:var(--accent);}
+  .row-between{display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;}
+  .hidden{display:none;}
+  .hint{font-size:12px; color:var(--sub); margin-top:4px;}
+  a.link{color:var(--accent); cursor:pointer; text-decoration:underline; font-size:12px;}
+  #saveBadge{font-size:12px;}
+  #saveBadge.ok{color:var(--good);}
+  #saveBadge.local{color:var(--accent2);}
+
+  /* 月ごと（見やすく） */
+  #monthTbl td{padding:12px 8px;}
+  #monthTbl .mlabel{font-weight:600; font-size:15px;}
+  #monthTbl .mcount{font-size:19px; font-weight:700;}
+  #monthTbl .bar{height:24px;}
+  .up{color:var(--good); font-weight:600;}
+  .down{color:var(--danger); font-weight:600;}
+  .flat{color:var(--sub);}
+  .lp{color:var(--sub); font-size:11px;}
+  /* ロイヤル区分の色 */
+  .tg8{color:#ffce4a; font-weight:700;}
+  .tg57{color:#3ecf8e; font-weight:600;}
+  .tg24{color:#4ea1ff;}
+  .tg1{color:#9aa7b4;}
+  .tg0{color:#566270;}
+  #dayTbl tr.zeroday td{color:#6b7682;}
+  #loyalMoveWrap{max-height:460px; overflow:auto; margin-top:6px;}
+  #loyalMoveTbl{font-size:13px; white-space:nowrap;}
+  #loyalMoveTbl th{position:sticky; top:0; background:var(--panel); z-index:1;}
+  #loyalMoveTbl td.nm{max-width:160px; overflow:hidden; text-overflow:ellipsis;}
+
+  /* 日ごと一覧 */
+  #dayWrap{max-height:420px; overflow:auto;}
+  #dayWrap th{position:sticky; top:0; background:var(--panel); z-index:1;}
+  .mgroup td{background:var(--panel2); font-weight:700; font-size:15px; border-top:2px solid var(--accent); padding:9px 8px;}
+  .mgsub{color:var(--sub); font-weight:500; font-size:13px;}
+
+  /* PDF出力 */
+  #pdfbar{margin:4px 0 0;}
+  #pdfBtn{background:var(--accent); color:#06223f; border:none; font-weight:600;}
+  #pdfBtn:hover{filter:brightness(1.1);}
+  .print-only{display:none;}
+
+  @media print{
+    @page{ margin:12mm; }
+    *{ -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important; }
+    body{ background:#fff !important; color:#000 !important; padding:0; font-size:12px; }
+    .wrap{ max-width:none; }
+    h1, #introMuted, #drop, #pdfbar, #setSection, #sakuraSection, .hint{ display:none !important; }
+    .print-only{ display:block !important; }
+
+    /* レポート見出し */
+    #printHeader{ margin:0 0 8px; }
+    #printHeader > div:first-child{ font-size:18px; }
+    #printMeta{ font-size:11.5px !important; line-height:1.6 !important; }
+    #printHeader hr{ margin:8px 0 !important; }
+
+    /* セクションは枠なし・詰める・途中改ページOK（空白を作らない） */
+    section{ background:#fff !important; border:none !important; box-shadow:none; padding:0 !important; margin:0 0 12px !important; break-inside:auto; }
+    section h2{ color:#000 !important; font-size:14px; margin:0 0 5px; break-after:avoid; }
+    section h2 .tag{ color:#666 !important; }
+
+    /* 行は割らない・月見出しは行末で孤立させない */
+    tr{ break-inside:avoid; }
+    tr.mgroup{ break-after:avoid; }
+
+    /* ロイヤル・曜日ごとはそれぞれ新しいページから */
+    #loyalSection, #dowSection{ break-before:page !important; page-break-before:always !important; }
+
+    /* サマリーは横1列でコンパクト */
+    .cards{ display:flex !important; gap:8px; margin:6px 0 12px !important; }
+    .card{ flex:1; background:#fff !important; border:1px solid #bbb !important; padding:6px 8px !important; }
+    .card .label{ color:#555 !important; font-size:10px; }
+    .card .num{ color:#000 !important; font-size:16px; }
+
+    /* 表 */
+    th{ color:#000 !important; border-bottom:1px solid #888 !important; padding:4px 6px; font-size:11px; }
+    td{ border-bottom:1px solid #ddd !important; padding:4px 6px; }
+    .w7{ color:#b56a00 !important; }
+    #monthTbl .mcount{ font-size:15px; }
+    .bar{ height:13px !important; border:1px solid #8a8a8a; }   /* 色OFFでも長さが見える */
+
+    /* 月区切り見出しは罫線中心（背景に頼らない） */
+    .mgroup td{ background:#eee !important; color:#000 !important; border-top:1.5px solid #555 !important; border-bottom:1px solid #999 !important; font-size:12.5px; padding:5px 6px; }
+
+    /* 日ごと・個人別推移は普通に流す（無駄な改ページなし） */
+    #dayWrap, #loyalMoveWrap{ max-height:none !important; overflow:visible !important; }
+    #dayWrap th, #loyalMoveTbl th{ position:static !important; background:#fff !important; }
+    #loyalMoveTbl{ font-size:10px; }
+    #dayTbl tr.zeroday td{ color:#777 !important; }
+  }
+</style>
+</head>
+<body>
+<div id="gate">
+  <div id="gateBox">
+    <h2>🔒 来店集計</h2>
+    <input type="password" id="gateInput" placeholder="パスワード" autocomplete="current-password">
+    <button id="gateBtn">入る</button>
+    <div id="gateErr"></div>
+  </div>
+</div>
+<div class="wrap">
+  <h1>来店集計 <span id="saveBadge" class="local">●</span> <span style="font-size:12px; color:#5c6773; font-weight:400;">v2026.06.09g</span></h1>
+  <div class="muted" id="introMuted">チェックインCSVをドラッグ＆ドロップ → 月ごと・曜日ごとの来店数を自動集計。サクラ（スタッフ）は除外できます。データはこのPC内だけで処理されます。</div>
+
+  <div id="drop">
+    <div class="big">📄 ここにCSVをドラッグ＆ドロップ</div>
+    <div class="sub">またはクリックしてファイルを選択（来店日時, 退店日時, ID, 表示名 の形式）</div>
+    <input type="file" id="file" accept=".csv,text/csv" class="hidden">
+  </div>
+
+  <div id="results" class="hidden">
+
+    <div class="row-between" id="pdfbar">
+      <div class="muted">集計結果をPDFに保存できます（印刷画面で「PDFとして保存」または「Microsoft Print to PDF」を選択）。</div>
+      <button id="pdfBtn">📄 PDFで保存</button>
+    </div>
+
+    <div class="print-only" id="printHeader">
+      <div style="font-size:20px; font-weight:700;">来店集計レポート</div>
+      <div id="printMeta" style="font-size:12px; line-height:1.7; margin-top:6px;"></div>
+      <hr style="border:none; border-top:1px solid #ccc; margin:10px 0;">
+    </div>
+
+    <div class="cards" id="cards"></div>
+
+    <section id="setSection">
+      <div class="row-between">
+        <h2>⚙️ 集計の設定</h2>
+        <a class="link" id="resetSakura">サクラ設定をすべて解除</a>
+      </div>
+      <div class="ctl">
+        <label><input type="checkbox" id="bizDay" checked> 深夜は前日扱いにする（営業日基準）</label>
+        <label>切替時刻 <input type="number" id="cutoff" min="0" max="12" value="6"> 時より前は前日</label>
+      </div>
+      <div class="ctl">
+        <label>🔁 再来店の判定 <input type="number" id="retDays" min="1" max="365" value="14"> 日以内</label>
+      </div>
+    </section>
+
+    <section>
+      <h2>📅 月間来店数の推移 <span class="tag">サクラ除外後・前月比</span></h2>
+      <table id="monthTbl"></table>
+    </section>
+
+    <section>
+      <h2>🆕 月間 新規来店数の推移 <span class="tag">サクラ除外後</span></h2>
+      <table id="newTbl"></table>
+      <div class="hint">「新規」＝ データ期間内で初めて来店した人。※データが1ヶ月だけだと全員が新規になります（数ヶ月分のCSV推奨）。</div>
+    </section>
+
+    <section>
+      <h2>🔁 新規の再来店割合 <span class="tag">初回から<span id="retDaysLbl">14</span>日以内</span></h2>
+      <table id="retTbl"></table>
+      <div class="hint">新規のうち、初回から指定日数以内にもう一度来店した割合（母数＝その月の新規 全員、最新データ日までで判定）。</div>
+    </section>
+
+    <section id="loyalSection">
+      <h2>⭐ ロイヤルユーザー区分（月別） <span class="tag">その月の来店回数で分類</span></h2>
+      <table id="loyalTbl"></table>
+      <div class="hint">各月に来店した人を、その月の来店回数で分類。括弧内は構成比。8回以上＝コア常連。</div>
+    </section>
+
+    <section id="loyalMoveSection">
+      <h2>🔀 ロイヤル区分が変わった人 <span class="tag">該当 <span id="moveCount">0人</span></span></h2>
+      <div id="loyalMoveWrap">
+        <table id="loyalMoveTbl"></table>
+      </div>
+      <div class="hint">来店した月どうしで区分が上下した人だけを表示（同じ区分のまま・1回のみの人は除外）。色：<span class="tg8">🟡8回以上</span> <span class="tg57">🟢5〜7</span> <span class="tg24">🔵2〜4</span> <span class="tg1">⚪1回</span> ・＝来店なし。⬆⬇は前月からの上下。来店回数の多い順。</div>
+    </section>
+
+    <section id="dowSection">
+      <h2>🗓️ 曜日ごとの来店数 <span class="tag">サクラ除外後・月ごと</span></h2>
+      <table id="dowTbl"></table>
+      <div class="hint">「日数」＝データ期間内のその曜日の総日数（0人の日も含む）。「平均/日」＝延べ÷日数。</div>
+    </section>
+
+    <section id="daySection">
+      <h2>📆 日ごとの来店数 <span class="tag">サクラ除外後・月ごと</span></h2>
+      <div id="dayWrap">
+        <table id="dayTbl"></table>
+      </div>
+    </section>
+
+    <section id="sakuraSection">
+      <div class="row-between">
+        <h2>🎭 サクラ（除外する人）の設定</h2>
+        <div class="muted" id="exclSummary"></div>
+      </div>
+      <input type="text" id="search" placeholder="名前で絞り込み...">
+      <div id="exclPills" style="margin-top:8px;"></div>
+      <div class="names" id="names"></div>
+      <div class="hint">チェックを入れた人は全集計から除外されます。<span id="saveMode">設定の保存先を確認中…</span>
+        ／ <a class="link" id="exportSakura">設定を書き出し</a>・<a class="link" id="importSakura">読み込み</a>（バックアップ／別端末への引き継ぎ用）
+        <input type="file" id="importFile" accept=".json,application/json" class="hidden"></div>
+    </section>
+
+  </div>
+</div>
+
+<script>
+const STORE_KEY = "raitenSakuraNames_v1";
+let RAW = [];          // {date:Date, name, id}
+let sakura = new Set(loadSakuraLocal());
+let serverOk = false;  // サーバー(sakura.json)に保存できるか
+
+const $ = s => document.querySelector(s);
+const WD = ["日","月","火","水","木","金","土"];
+
+/* ---------- パスワードゲート（公開時のみ・ハッシュ照合で生パスワードを隠す） ---------- */
+const APP_PASSWORD_HASH = "4fe83ce8bcd89ccf71991f7aa7d89a409611d1e0cecbc472f0ee38270d288c41"; // 既定: raiten2026（変更可）
+async function sha256hex(s){
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
+  return [...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,"0")).join("");
+}
+async function tryUnlock(){
+  let ok=false;
+  try{ ok = (await sha256hex($("#gateInput").value))===APP_PASSWORD_HASH; }catch(e){ ok=false; }
+  if(ok){ try{ localStorage.setItem("raitenAuthed","1"); }catch(e){} document.documentElement.classList.remove("needauth"); }
+  else { $("#gateErr").textContent="パスワードが違います"; $("#gateInput").value=""; $("#gateInput").focus(); }
+}
+$("#gateBtn").addEventListener("click", tryUnlock);
+$("#gateInput").addEventListener("keydown", e=>{ if(e.key==="Enter") tryUnlock(); });
+if(document.documentElement.classList.contains("needauth")) $("#gateInput").focus();
+
+/* ---------- 保存（OneDrive優先・localStorageフォールバック） ---------- */
+function loadSakuraLocal(){
+  try{ return JSON.parse(localStorage.getItem(STORE_KEY)||"[]"); }catch(e){ return []; }
+}
+function saveSakura(){
+  const arr=[...sakura];
+  try{ localStorage.setItem(STORE_KEY, JSON.stringify(arr)); }catch(e){}   // バックアップ
+  try{
+    fetch("/api/sakura",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(arr)})
+      .then(r=>{ if(r.ok){ serverOk=true; updateSaveBadge(); } })
+      .catch(()=>{});
+  }catch(e){}
+}
+function updateSaveBadge(){
+  const b=$("#saveBadge"), m=$("#saveMode");
+  if(serverOk){
+    b.className="ok"; b.title="設定はOneDriveに保存・同期されます";
+    if(m) m.textContent="設定は OneDrive の「来店集計」フォルダに保存され、クラウドにも自動同期されます。";
+  }else{
+    b.className="local"; b.title="ブラウザ内に保存（起動方法によっては消えることがあります）";
+    if(m) m.textContent="設定はブラウザ内に保存中（「起動」ボタンから開くとファイルに永続保存されます）。";
+  }
+}
+// 起動時にサーバーの保存内容を取得（あればそれを正とする）。404等(静的ホスト)では catch へ。
+(function initServer(){
+  try{
+    fetch("/api/sakura").then(r=>{
+      if(!r.ok) throw new Error("no api");
+      return r.json();
+    }).then(arr=>{
+      serverOk=true;
+      if(Array.isArray(arr)) sakura=new Set(arr);
+      updateSaveBadge();
+      if(RAW.length) render(); else if($("#names").innerHTML) renderNames();
+    }).catch(()=>{ updateSaveBadge(); });
+  }catch(e){ updateSaveBadge(); }
+})();
+
+/* ---------- ファイル読み込み ---------- */
+const drop = $("#drop"), fileInput = $("#file");
+drop.addEventListener("click", ()=>fileInput.click());
+fileInput.addEventListener("change", e=>{ if(e.target.files[0]) readFile(e.target.files[0]); });
+["dragenter","dragover"].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add("hover");}));
+["dragleave","drop"].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove("hover");}));
+drop.addEventListener("drop", e=>{
+  const f = e.dataTransfer.files[0];
+  if(f) readFile(f);
+});
+
+function readFile(file){
+  const reader = new FileReader();
+  reader.onload = e=>{
+    const buf = e.target.result;
+    let text = new TextDecoder("utf-8").decode(buf);
+    if(text.includes("�")){ // 文字化け（Shift-JIS）なら変換
+      try{ text = new TextDecoder("shift_jis").decode(buf); }catch(_){}
+    }
+    parseCSV(text);
+    drop.classList.add("compact");
+    drop.querySelector(".big").textContent = "✅ 読み込み完了: " + file.name + "（クリックで別ファイル）";
+    drop.querySelector(".sub").textContent = RAW.length + " 件のチェックイン記録";
+    $("#results").classList.remove("hidden");
+    render();
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function splitLine(line){
+  const out=[]; let cur="", q=false;
+  for(let i=0;i<line.length;i++){
+    const c=line[i];
+    if(q){ if(c=='"'){ if(line[i+1]=='"'){cur+='"';i++;} else q=false; } else cur+=c; }
+    else{ if(c=='"')q=true; else if(c==','){out.push(cur);cur="";} else cur+=c; }
+  }
+  out.push(cur);
+  return out;
+}
+
+function parseCSV(text){
+  RAW=[];
+  const lines = text.split(/\r?\n/).filter(l=>l.trim()!=="");
+  let start=0;
+  if(lines[0] && /来店|日時|CallNumber|表示名/.test(lines[0])) start=1;
+  for(let i=start;i<lines.length;i++){
+    const c = splitLine(lines[i]);
+    if(c.length<1) continue;
+    const dt = parseDate(c[0]);
+    if(!dt) continue;
+    RAW.push({ date:dt, id:(c[2]||"").trim(), name:(c[3]||"").trim()||"(名前なし)" });
+  }
+}
+
+function parseDate(s){
+  if(!s) return null;
+  s=s.trim();
+  const m = s.match(/(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})[ T](\d{1,2}):(\d{1,2})(?::(\d{1,2}))?/);
+  if(!m) return null;
+  return new Date(+m[1], +m[2]-1, +m[3], +m[4], +m[5], +(m[6]||0));
+}
+
+/* ---------- 集計＆描画 ---------- */
+function businessDate(d){
+  if(!$("#bizDay").checked) return new Date(d.getFullYear(),d.getMonth(),d.getDate());
+  const cutoff = +$("#cutoff").value || 0;
+  const b = new Date(d.getFullYear(),d.getMonth(),d.getDate());
+  if(d.getHours() < cutoff) b.setDate(b.getDate()-1);
+  return b;
+}
+function ymKey(d){ return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0"); }
+function prevYM(k){ let [y,m]=k.split("-").map(Number); m--; if(m===0){m=12;y--;} return y+"-"+String(m).padStart(2,"0"); }
+
+function pkey(r){ return r.id || r.name; }
+
+// 人物ごとの来店日時（昇順）
+function buildPeople(active){
+  const p={};
+  active.forEach(r=>{ (p[pkey(r)]=p[pkey(r)]||[]).push(r.date); });
+  Object.values(p).forEach(a=>a.sort((x,y)=>x-y));
+  return p;
+}
+
+function render(){
+  const active = RAW.filter(r=>!sakura.has(r.name));   // サクラ除外
+  const people = buildPeople(active);
+  const excludedCount = RAW.length - active.length;
+  const retDays = Math.max(1, +$("#retDays").value || 14);
+  $("#retDaysLbl").textContent = retDays;
+
+  const uniq = Object.keys(people).length;
+  const newTotal = Object.keys(people).length; // 期間内初登場（＝全ユニーク）
+  const monthsSet = new Set(active.map(r=>ymKey(businessDate(r.date))));
+  $("#cards").innerHTML = `
+    <div class="card"><div class="label">延べ来店数</div><div class="num">${active.length}<small> 件</small></div></div>
+    <div class="card"><div class="label">実来店者数</div><div class="num">${uniq}<small> 人</small></div></div>
+    <div class="card"><div class="label">新規来店者</div><div class="num">${newTotal}<small> 人</small></div></div>
+    <div class="card"><div class="label">対象月数</div><div class="num">${monthsSet.size}<small> ヶ月</small></div></div>
+    <div class="card"><div class="label">サクラ除外</div><div class="num" style="color:var(--danger)">${excludedCount}<small> 件</small></div></div>
+  `;
+
+  renderMonth(active);
+  renderNew(people);
+  renderRetention(people, retDays);
+  renderLoyalty(active);
+  renderLoyaltyMove(active);
+  renderDOW(active);
+  renderDay(active);
+  renderNames();
+  buildPrintMeta();
+  $("#exclSummary").textContent = sakura.size>0 ? `除外中: ${sakura.size}名 / ${excludedCount}件` : "除外なし";
+}
+
+/* ---------- PDF（印刷）レポート ---------- */
+function buildPrintMeta(){
+  if(!RAW.length) return;
+  const ds = RAW.map(r=>r.date).filter(Boolean).sort((a,b)=>a-b);
+  const f = d => d.getFullYear()+"/"+(d.getMonth()+1)+"/"+d.getDate();
+  const period = ds.length ? f(ds[0])+" 〜 "+f(ds[ds.length-1]) : "-";
+  const biz = $("#bizDay").checked ? ("営業日基準（"+($("#cutoff").value||0)+"時より前は前日）") : "暦日基準";
+  const retDays = Math.max(1, +$("#retDays").value || 14);
+  const exc = [...sakura];
+  const excStr = exc.length ? exc.join("、") : "なし";
+  const n = new Date(), p = x => String(x).padStart(2,"0");
+  const out = n.getFullYear()+"/"+p(n.getMonth()+1)+"/"+p(n.getDate())+" "+p(n.getHours())+":"+p(n.getMinutes());
+  $("#printMeta").innerHTML =
+    "集計期間：" + period + "<br>" +
+    "集計方法：" + biz + " ／ 再来店判定：" + retDays + "日以内<br>" +
+    "除外したサクラ（" + exc.length + "名）：" + esc(excStr) + "<br>" +
+    "出力日時：" + out;
+}
+
+function renderMonth(active){
+  const map={};
+  active.forEach(r=>{ const k=ymKey(businessDate(r.date)); map[k]=(map[k]||0)+1; });
+  const keys=Object.keys(map).sort();
+  const max=Math.max(1,...Object.values(map));
+  let html=`<tr><th>月</th><th class="barcell">来店人数</th><th class="num-r">人数</th><th class="num-r">前月比</th></tr>`;
+  keys.forEach(k=>{
+    const [y,m]=k.split("-");
+    const prev=map[prevYM(k)];                 // 直前の「暦月」と比較（データが無ければ―）
+    let delta='<span class="flat">―</span>';
+    if(prev!=null){
+      const d=map[k]-prev;
+      if(d>0) delta=`<span class="up">▲ +${d}</span>`;
+      else if(d<0) delta=`<span class="down">▼ ${d}</span>`;
+      else delta='<span class="flat">±0</span>';
+    }
+    html+=`<tr>
+      <td class="mlabel">${y}年${+m}月</td>
+      <td class="barcell"><span class="bar" style="width:${map[k]/max*100}%"></span></td>
+      <td class="num-r mcount">${map[k]} 人</td>
+      <td class="num-r">${delta}</td>
+    </tr>`;
+  });
+  $("#monthTbl").innerHTML=html;
+}
+
+function deltaCell(cur, prev){
+  if(prev==null) return '<span class="flat">―</span>';
+  const d=cur-prev;
+  if(d>0) return `<span class="up">▲ +${d}</span>`;
+  if(d<0) return `<span class="down">▼ ${d}</span>`;
+  return '<span class="flat">±0</span>';
+}
+
+// 月間 新規来店数の推移（人物の初回来店月でカウント）
+function renderNew(people){
+  const map={};
+  Object.values(people).forEach(dates=>{ const ym=ymKey(businessDate(dates[0])); map[ym]=(map[ym]||0)+1; });
+  const keys=Object.keys(map).sort();
+  const max=Math.max(1,...Object.values(map));
+  let html=`<tr><th>月</th><th class="barcell">新規来店者</th><th class="num-r">新規</th><th class="num-r">前月比</th></tr>`;
+  if(!keys.length){ $("#newTbl").innerHTML=html; return; }
+  keys.forEach(k=>{
+    const [y,m]=k.split("-");
+    html+=`<tr>
+      <td class="mlabel">${y}年${+m}月</td>
+      <td class="barcell"><span class="bar" style="width:${map[k]/max*100}%;background:var(--good)"></span></td>
+      <td class="num-r mcount">${map[k]} 人</td>
+      <td class="num-r">${deltaCell(map[k], map[prevYM(k)])}</td>
+    </tr>`;
+  });
+  $("#newTbl").innerHTML=html;
+}
+
+// 新規の再来店割合（母数＝その月の新規 全員。判定日数は可変）
+function renderRetention(people, retDays){
+  const res={}; // ym -> {all, ret}
+  Object.values(people).forEach(dates=>{
+    const first=dates[0];
+    const ym=ymKey(businessDate(first));
+    const winEnd=new Date(first.getTime()+retDays*864e5);
+    res[ym]=res[ym]||{all:0, ret:0};
+    res[ym].all++;
+    if(dates.some(d=> d>first && d<=winEnd)) res[ym].ret++;  // 初回からretDays日以内の再来店
+  });
+  const keys=Object.keys(res).sort();
+  let html=`<tr><th>月</th><th class="num-r">新規</th><th class="num-r">${retDays}日内再来</th><th class="num-r">再来率</th></tr>`;
+  if(!keys.length){ $("#retTbl").innerHTML=html; return; }
+  keys.forEach(k=>{
+    const [y,m]=k.split("-");
+    const r=res[k];
+    const rate = r.all? Math.round(r.ret/r.all*100)+"%" : '<span class="flat">―</span>';
+    html+=`<tr>
+      <td class="mlabel">${y}年${+m}月</td>
+      <td class="num-r">${r.all} 人</td>
+      <td class="num-r">${r.ret} 人</td>
+      <td class="num-r mcount">${rate}</td>
+    </tr>`;
+  });
+  $("#retTbl").innerHTML=html;
+}
+
+// ロイヤルユーザー区分（その月の来店回数で分類）
+function renderLoyalty(active){
+  const months={}; // ym -> {pkey:count}
+  active.forEach(r=>{ const ym=ymKey(businessDate(r.date)); (months[ym]=months[ym]||{}); months[ym][pkey(r)]=(months[ym][pkey(r)]||0)+1; });
+  const keys=Object.keys(months).sort();
+  let html=`<tr><th>月</th><th class="num-r">8回以上</th><th class="num-r">5〜7回</th><th class="num-r">2〜4回</th><th class="num-r">1回</th><th class="num-r">来店者計</th></tr>`;
+  if(!keys.length){ $("#loyalTbl").innerHTML=html; return; }
+  const pct=(n,t)=> t? `<span class="lp">(${Math.round(n/t*100)}%)</span>` : "";
+  keys.forEach(k=>{
+    const [y,m]=k.split("-");
+    const counts=Object.values(months[k]);
+    let b8=0,b57=0,b24=0,b1=0;
+    counts.forEach(c=>{ if(c>=8)b8++; else if(c>=5)b57++; else if(c>=2)b24++; else b1++; });
+    const t=counts.length;
+    html+=`<tr>
+      <td class="mlabel">${y}年${+m}月</td>
+      <td class="num-r"><b>${b8}</b> ${pct(b8,t)}</td>
+      <td class="num-r">${b57} ${pct(b57,t)}</td>
+      <td class="num-r">${b24} ${pct(b24,t)}</td>
+      <td class="num-r">${b1} ${pct(b1,t)}</td>
+      <td class="num-r mcount">${t} 人</td>
+    </tr>`;
+  });
+  $("#loyalTbl").innerHTML=html;
+}
+
+// ロイヤル区分の推移（個人別・区分が変わった人だけ）
+function renderLoyaltyMove(active){
+  const months={}, nameOf={};
+  active.forEach(r=>{ const ym=ymKey(businessDate(r.date)); const k=pkey(r); (months[ym]=months[ym]||{}); months[ym][k]=(months[ym][k]||0)+1; nameOf[k]=r.name; });
+  const monthKeys=Object.keys(months).sort();
+  if(!monthKeys.length){ $("#loyalMoveTbl").innerHTML=""; return; }
+  const totals={};
+  monthKeys.forEach(ym=> Object.entries(months[ym]).forEach(([k,c])=> totals[k]=(totals[k]||0)+c));
+  const rank=c=> c>=8?4 : c>=5?3 : c>=2?2 : c>=1?1 : 0;
+  const cls =c=> c>=8?'tg8' : c>=5?'tg57' : c>=2?'tg24' : c>=1?'tg1' : 'tg0';
+
+  // 来店した月どうしの区分が上下した人だけに絞り込む
+  function changed(k){
+    const seq = monthKeys.filter(ym=>months[ym][k]>0).map(ym=> rank(months[ym][k]));
+    for(let i=1;i<seq.length;i++){ if(seq[i]!==seq[i-1]) return true; }
+    return false;
+  }
+  const persons = Object.keys(totals).filter(changed).sort((a,b)=>totals[b]-totals[a]);
+
+  let head=`<tr><th>名前</th>`;
+  monthKeys.forEach(ym=>{ head+=`<th class="num-r">${+ym.split("-")[1]}月</th>`; });
+  head+=`<th class="num-r">計</th></tr>`;
+
+  if(!persons.length){
+    $("#moveCount").textContent = "0人";
+    $("#loyalMoveTbl").innerHTML = head + `<tr><td colspan="${monthKeys.length+2}" style="color:var(--sub)">区分が変わった人はいません（複数月のデータが必要です）。</td></tr>`;
+    return;
+  }
+
+  let body="";
+  persons.forEach(k=>{
+    let prev=0, row=`<td class="nm" title="${esc(nameOf[k]||k)}">${esc(nameOf[k]||k)}</td>`;
+    monthKeys.forEach(ym=>{
+      const c=months[ym][k]||0, r=rank(c);
+      let ar='';
+      if(c>0 && prev>0){ if(r>prev) ar=' <span class="up">⬆</span>'; else if(r<prev) ar=' <span class="down">⬇</span>'; }
+      row+=`<td class="num-r ${cls(c)}">${c>0 ? c+ar : '・'}</td>`;
+      prev=r;
+    });
+    row+=`<td class="num-r">${totals[k]}</td>`;
+    body+=`<tr>${row}</tr>`;
+  });
+  $("#loyalMoveTbl").innerHTML=head+body;
+  $("#moveCount").textContent = persons.length + "人";
+}
+
+function renderDOW(active){
+  // 日別の来店数
+  const dayVisits={};
+  active.forEach(r=>{ const k=businessDate(r.date).getTime(); dayVisits[k]=(dayVisits[k]||0)+1; });
+  // データ期間の全日を1日ずつ走査し、曜日ごとの「総日数(0人含む)」と「延べ来店」を月別に集計
+  const span = RAW.map(r=>businessDate(r.date).getTime());
+  if(!span.length){ $("#dowTbl").innerHTML=""; return; }
+  let cur=new Date(Math.min(...span)); const end=new Date(Math.max(...span));
+  const months={}; // ym -> {total:[7], days:[7]}
+  while(cur.getTime()<=end.getTime()){
+    const ym=ymKey(cur), w=cur.getDay();
+    if(!months[ym]) months[ym]={total:[0,0,0,0,0,0,0], days:[0,0,0,0,0,0,0]};
+    months[ym].days[w]++;                                   // 0人の日も含む総日数
+    months[ym].total[w]+= dayVisits[cur.getTime()]||0;      // 延べ来店
+    cur=new Date(cur.getFullYear(),cur.getMonth(),cur.getDate()+1);
+  }
+  const monthKeys=Object.keys(months).sort();
+  // 棒グラフは「平均/日（＝延べ÷その曜日の総日数）」でスケール
+  let maxAvg=0.1;
+  monthKeys.forEach(ym=>{ const mm=months[ym]; for(let w=0;w<7;w++){ const d=mm.days[w]; const a=d? mm.total[w]/d : 0; if(a>maxAvg) maxAvg=a; } });
+
+  const order=[1,2,3,4,5,6,0]; // 月曜始まり
+  let html=`<tr><th>曜日</th><th class="barcell">平均来店数/日</th><th class="num-r">延べ</th><th class="num-r">日数</th><th class="num-r">平均/日</th></tr>`;
+  monthKeys.forEach(ym=>{
+    const [y,m]=ym.split("-");
+    const mm=months[ym];
+    const monthTotal=mm.total.reduce((a,b)=>a+b,0);
+    html+=`<tr class="mgroup"><td colspan="5">${y}年${+m}月　<span class="mgsub">合計 ${monthTotal}人</span></td></tr>`;
+    order.forEach(w=>{
+      const d=mm.days[w];
+      const avgNum = d? mm.total[w]/d : 0;
+      const avg = d? avgNum.toFixed(1) : "-";
+      const we=(w===0||w===6);
+      html+=`<tr>
+        <td${we?' class="w7"':''}>${WD[w]}</td>
+        <td class="barcell"><span class="bar" style="width:${avgNum/maxAvg*100}%;${we?'background:var(--accent2)':''}"></span></td>
+        <td class="num-r">${mm.total[w]} 件</td>
+        <td class="num-r">${d} 日</td>
+        <td class="num-r">${avg}${d?' 人':''}</td>
+      </tr>`;
+    });
+  });
+  $("#dowTbl").innerHTML=html;
+}
+
+function renderDay(active){
+  const map={};
+  active.forEach(r=>{ const k=businessDate(r.date).getTime(); map[k]=(map[k]||0)+1; });
+  // 0人の日も含めるため、データ全体の最初〜最後の日を1日ずつ並べる
+  const span = RAW.map(r=>businessDate(r.date).getTime());
+  if(!span.length){ $("#dayTbl").innerHTML=""; return; }
+  let cur=new Date(Math.min(...span)); const end=new Date(Math.max(...span));
+  const days=[];
+  while(cur.getTime()<=end.getTime()){ days.push(cur.getTime()); cur=new Date(cur.getFullYear(),cur.getMonth(),cur.getDate()+1); }
+  const max=Math.max(1,...Object.values(map));
+
+  // 月ごとにまとめる
+  const months={};
+  days.forEach(k=>{ const ym=ymKey(new Date(k)); (months[ym]=months[ym]||[]).push(k); });
+  const monthKeys=Object.keys(months).sort();
+
+  let html=`<tr><th>日付</th><th class="barcell">来店人数</th><th class="num-r">人数</th></tr>`;
+  monthKeys.forEach(ym=>{
+    const [y,m]=ym.split("-");
+    const total=months[ym].reduce((s,k)=>s+(map[k]||0),0);
+    const openDays=months[ym].filter(k=>map[k]).length;
+    html+=`<tr class="mgroup"><td colspan="3">${y}年${+m}月　<span class="mgsub">合計 ${total}人 / 営業${openDays}日</span></td></tr>`;
+    months[ym].forEach(k=>{
+      const d=new Date(k), w=d.getDay(), we=(w===0||w===6), c=map[k]||0;
+      html+=`<tr${c===0?' class="zeroday"':''}>
+        <td${we?' class="w7"':''}>${d.getMonth()+1}/${d.getDate()}(${WD[w]})</td>
+        <td class="barcell"><span class="bar" style="width:${c/max*100}%;${we?'background:var(--accent2)':''}"></span></td>
+        <td class="num-r">${c} 人</td>
+      </tr>`;
+    });
+  });
+  $("#dayTbl").innerHTML=html;
+}
+
+function renderNames(){
+  const map={};
+  RAW.forEach(r=>{
+    (map[r.name]=map[r.name]||{cnt:0,ids:new Set()});
+    map[r.name].cnt++; map[r.name].ids.add(r.id);
+  });
+  const q=($("#search").value||"").trim().toLowerCase();
+  const list=Object.entries(map)
+    .filter(([n])=>!q || n.toLowerCase().includes(q))
+    .sort((a,b)=>b[1].cnt-a[1].cnt);
+
+  $("#names").innerHTML = list.map(([n,info])=>{
+    const checked=sakura.has(n)?"checked":"";
+    const ids=[...info.ids].filter(Boolean).join(",");
+    return `<label class="name-row ${sakura.has(n)?'excl':''}">
+      <input type="checkbox" data-name="${esc(n)}" ${checked}>
+      <span class="nm" title="${esc(n)} (${ids})">${esc(n)} <span class="id">${ids}</span></span>
+      <span class="cnt">${info.cnt}</span>
+    </label>`;
+  }).join("");
+
+  $("#exclPills").innerHTML=[...sakura].map(n=>
+    `<span class="pill">🎭 ${esc(n)} <b data-rm="${esc(n)}" style="cursor:pointer">✕</b></span>`).join("");
+}
+
+function esc(s){return (s+"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
+
+/* ---------- イベント ---------- */
+$("#names").addEventListener("change", e=>{
+  if(e.target.matches("input[type=checkbox]")){
+    const n=e.target.dataset.name;
+    if(e.target.checked) sakura.add(n); else sakura.delete(n);
+    render();        // 先に画面を更新（保存失敗で止まらないように）
+    saveSakura();
+  }
+});
+$("#exclPills").addEventListener("click", e=>{
+  if(e.target.dataset.rm){ sakura.delete(e.target.dataset.rm); render(); saveSakura(); }
+});
+$("#search").addEventListener("input", renderNames);
+$("#bizDay").addEventListener("change", render);
+$("#cutoff").addEventListener("change", render);
+$("#retDays").addEventListener("change", render);
+$("#resetSakura").addEventListener("click", ()=>{ sakura.clear(); render(); saveSakura(); });
+$("#exportSakura").addEventListener("click", ()=>{
+  const blob=new Blob([JSON.stringify([...sakura])],{type:"application/json"});
+  const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="サクラ設定.json"; a.click();
+});
+$("#importSakura").addEventListener("click", ()=> $("#importFile").click());
+$("#importFile").addEventListener("change", e=>{
+  const f=e.target.files[0]; if(!f) return;
+  const r=new FileReader();
+  r.onload=()=>{ try{ const arr=JSON.parse(r.result); if(Array.isArray(arr)){ sakura=new Set(arr); render(); saveSakura(); } else alert("形式が違います"); }catch(err){ alert("読み込めませんでした"); } };
+  r.readAsText(f);
+});
+
+$("#pdfBtn").addEventListener("click", ()=>{
+  buildPrintMeta();
+  const ds = RAW.map(r=>r.date).filter(Boolean).sort((a,b)=>a-b);
+  const ymd = d => ""+d.getFullYear()+String(d.getMonth()+1).padStart(2,"0")+String(d.getDate()).padStart(2,"0");
+  const fn = ds.length ? ("来店集計_"+ymd(ds[0])+"-"+ymd(ds[ds.length-1])) : "来店集計レポート";
+  const old = document.title;
+  document.title = fn;            // PDF保存時の既定ファイル名になる
+  window.print();
+  setTimeout(()=>{ document.title = old; }, 800);
+});
+
+updateSaveBadge();
+</script>
+</body>
+</html>
