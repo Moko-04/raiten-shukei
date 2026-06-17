@@ -63,7 +63,17 @@
   th{color:var(--sub); font-weight:500; font-size:12px; border-bottom:1px solid var(--line);}
   td{border-bottom:1px solid #20262f;}
   .barcell{width:55%;}
+  .track{position:relative; width:100%; height:20px;}
+  .track .bar{display:block; height:100%;}
+  .track::after{content:""; position:absolute; inset:0; pointer-events:none;
+    background-image:repeating-linear-gradient(90deg, rgba(255,255,255,.38) 0 1px, transparent 1px var(--gp));
+    -webkit-mask-image:repeating-linear-gradient(0deg, #000 0 3px, transparent 3px 6px);
+    mask-image:repeating-linear-gradient(0deg, #000 0 3px, transparent 3px 6px);}
   .bar{height:20px; border-radius:5px; background:var(--bar); min-width:2px; display:inline-block; vertical-align:middle;}
+  .axisrow td{border-bottom:none; padding:0 8px 3px;}
+  .axis{position:relative; height:14px;}
+  .axis .tick{position:absolute; transform:translateX(-50%); font-size:10px; color:var(--sub); white-space:nowrap; top:0;}
+  .axis .tick:first-child{transform:none;}
   .num-r{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap;}
   .w7{color:var(--accent2);} /* 土日強調用 */
 
@@ -98,7 +108,6 @@
   #monthTbl td{padding:12px 8px;}
   #monthTbl .mlabel{font-weight:600; font-size:15px;}
   #monthTbl .mcount{font-size:19px; font-weight:700;}
-  #monthTbl .bar{height:24px;}
   .up{color:var(--good); font-weight:600;}
   .down{color:var(--danger); font-weight:600;}
   .flat{color:var(--sub);}
@@ -134,6 +143,9 @@
     .wrap{ max-width:none; }
     h1, #introMuted, #drop, #pdfbar, #setSection, #sakuraSection, .hint{ display:none !important; }
     .print-only{ display:block !important; }
+    /* ロイヤル区分の凡例だけはPDFにも残す */
+    .hint.keepprint{ display:block !important; font-size:10px; margin-top:4px; }
+    .hint.keepprint, .hint.keepprint span{ color:#333 !important; }
 
     /* レポート見出し */
     #printHeader{ margin:0 0 8px; }
@@ -165,6 +177,12 @@
     .w7{ color:#b56a00 !important; }
     #monthTbl .mcount{ font-size:15px; }
     .bar{ height:13px !important; border:1px solid #8a8a8a; }   /* 色OFFでも長さが見える */
+    .track{ height:13px; }
+    .track::after{ background-image:repeating-linear-gradient(90deg, rgba(0,0,0,.45) 0 1px, transparent 1px var(--gp)) !important;
+      -webkit-mask-image:repeating-linear-gradient(0deg, #000 0 3px, transparent 3px 6px) !important;
+      mask-image:repeating-linear-gradient(0deg, #000 0 3px, transparent 3px 6px) !important; }
+    .axis .tick{ color:#555 !important; }
+    .axisrow td{ padding:0 6px 2px !important; }
 
     /* 月区切り見出しは罫線中心（背景に頼らない） */
     .mgroup td{ background:#eee !important; color:#000 !important; border-top:1.5px solid #555 !important; border-bottom:1px solid #999 !important; font-size:12.5px; padding:5px 6px; }
@@ -187,7 +205,7 @@
   </div>
 </div>
 <div class="wrap">
-  <h1>来店集計 <span id="saveBadge" class="local">●</span> <span style="font-size:12px; color:#5c6773; font-weight:400;">v2026.06.09g</span></h1>
+  <h1>来店集計 <span id="saveBadge" class="local">●</span> <span style="font-size:12px; color:#5c6773; font-weight:400;">v2026.06.09l</span></h1>
   <div class="muted" id="introMuted">チェックインCSVをドラッグ＆ドロップ → 月ごと・曜日ごとの来店数を自動集計。サクラ（スタッフ）は除外できます。データはこのPC内だけで処理されます。</div>
 
   <div id="drop">
@@ -253,7 +271,7 @@
       <div id="loyalMoveWrap">
         <table id="loyalMoveTbl"></table>
       </div>
-      <div class="hint">来店した月どうしで区分が上下した人だけを表示（同じ区分のまま・1回のみの人は除外）。色：<span class="tg8">🟡8回以上</span> <span class="tg57">🟢5〜7</span> <span class="tg24">🔵2〜4</span> <span class="tg1">⚪1回</span> ・＝来店なし。⬆⬇は前月からの上下。来店回数の多い順。</div>
+      <div class="hint keepprint">来店した月どうしで区分が上下した人だけを表示（同じ区分のまま・1回のみの人は除外）。色：<span class="tg8">🟡8回以上</span> <span class="tg57">🟢5〜7</span> <span class="tg24">🔵2〜4</span> <span class="tg1">⚪1回</span> ・＝来店なし。⬆⬇は前月からの上下。来店回数の多い順。</div>
     </section>
 
     <section id="dowSection">
@@ -423,6 +441,28 @@ function prevYM(k){ let [y,m]=k.split("-").map(Number); m--; if(m===0){m=12;y--;
 
 function pkey(r){ return r.id || r.name; }
 
+/* ---------- 棒グラフの目盛り（グリッド線＋数値軸） ---------- */
+function niceStep(max){
+  if(!(max>0)) return 1;
+  const raw=max/5, pow=Math.pow(10,Math.floor(Math.log10(raw))), n=raw/pow;
+  const s = n<1.5?1 : n<3?2 : n<7?5 : 10;
+  return s*pow;
+}
+// バー1本（目盛り線つきトラックに内包）。gp=目盛り間隔(％)、bg=色指定(任意)
+function barTD(pct, gp, bg){
+  return `<td class="barcell"><div class="track" style="--gp:${gp}%"><span class="bar" style="width:${pct}%;${bg||''}"></span></div></td>`;
+}
+// 数値軸の行（ヘッダー直下に1回）。trailCols=barcellより右の列数
+function axisRow(max, step, trailCols){
+  let ticks='', eps=step*1e-6;
+  for(let v=0; v<=max+eps; v+=step){
+    const left=(v/max)*100;
+    const lbl=(Math.abs(v-Math.round(v))<1e-9)? String(Math.round(v)) : (Math.round(v*10)/10).toFixed(1);
+    ticks+=`<span class="tick" style="left:${left}%">${lbl}</span>`;
+  }
+  return `<tr class="axisrow"><td></td><td class="barcell"><div class="axis">${ticks}</div></td><td colspan="${trailCols}"></td></tr>`;
+}
+
 // 人物ごとの来店日時（昇順）
 function buildPeople(active){
   const p={};
@@ -439,12 +479,10 @@ function render(){
   $("#retDaysLbl").textContent = retDays;
 
   const uniq = Object.keys(people).length;
-  const newTotal = Object.keys(people).length; // 期間内初登場（＝全ユニーク）
   const monthsSet = new Set(active.map(r=>ymKey(businessDate(r.date))));
   $("#cards").innerHTML = `
     <div class="card"><div class="label">延べ来店数</div><div class="num">${active.length}<small> 件</small></div></div>
     <div class="card"><div class="label">実来店者数</div><div class="num">${uniq}<small> 人</small></div></div>
-    <div class="card"><div class="label">新規来店者</div><div class="num">${newTotal}<small> 人</small></div></div>
     <div class="card"><div class="label">対象月数</div><div class="num">${monthsSet.size}<small> ヶ月</small></div></div>
     <div class="card"><div class="label">サクラ除外</div><div class="num" style="color:var(--danger)">${excludedCount}<small> 件</small></div></div>
   `;
@@ -485,7 +523,9 @@ function renderMonth(active){
   active.forEach(r=>{ const k=ymKey(businessDate(r.date)); map[k]=(map[k]||0)+1; });
   const keys=Object.keys(map).sort();
   const max=Math.max(1,...Object.values(map));
+  const step=niceStep(max), gp=step/max*100;
   let html=`<tr><th>月</th><th class="barcell">来店人数</th><th class="num-r">人数</th><th class="num-r">前月比</th></tr>`;
+  html+=axisRow(max, step, 2);
   keys.forEach(k=>{
     const [y,m]=k.split("-");
     const prev=map[prevYM(k)];                 // 直前の「暦月」と比較（データが無ければ―）
@@ -498,7 +538,7 @@ function renderMonth(active){
     }
     html+=`<tr>
       <td class="mlabel">${y}年${+m}月</td>
-      <td class="barcell"><span class="bar" style="width:${map[k]/max*100}%"></span></td>
+      ${barTD(map[k]/max*100, gp, '')}
       <td class="num-r mcount">${map[k]} 人</td>
       <td class="num-r">${delta}</td>
     </tr>`;
@@ -520,13 +560,15 @@ function renderNew(people){
   Object.values(people).forEach(dates=>{ const ym=ymKey(businessDate(dates[0])); map[ym]=(map[ym]||0)+1; });
   const keys=Object.keys(map).sort();
   const max=Math.max(1,...Object.values(map));
+  const step=niceStep(max), gp=step/max*100;
   let html=`<tr><th>月</th><th class="barcell">新規来店者</th><th class="num-r">新規</th><th class="num-r">前月比</th></tr>`;
   if(!keys.length){ $("#newTbl").innerHTML=html; return; }
+  html+=axisRow(max, step, 2);
   keys.forEach(k=>{
     const [y,m]=k.split("-");
     html+=`<tr>
       <td class="mlabel">${y}年${+m}月</td>
-      <td class="barcell"><span class="bar" style="width:${map[k]/max*100}%;background:var(--good)"></span></td>
+      ${barTD(map[k]/max*100, gp, 'background:var(--good)')}
       <td class="num-r mcount">${map[k]} 人</td>
       <td class="num-r">${deltaCell(map[k], map[prevYM(k)])}</td>
     </tr>`;
@@ -655,6 +697,7 @@ function renderDOW(active){
   let maxAvg=0.1;
   monthKeys.forEach(ym=>{ const mm=months[ym]; for(let w=0;w<7;w++){ const d=mm.days[w]; const a=d? mm.total[w]/d : 0; if(a>maxAvg) maxAvg=a; } });
 
+  const step=niceStep(maxAvg), gp=step/maxAvg*100;
   const order=[1,2,3,4,5,6,0]; // 月曜始まり
   let html=`<tr><th>曜日</th><th class="barcell">平均来店数/日</th><th class="num-r">延べ</th><th class="num-r">日数</th><th class="num-r">平均/日</th></tr>`;
   monthKeys.forEach(ym=>{
@@ -662,6 +705,7 @@ function renderDOW(active){
     const mm=months[ym];
     const monthTotal=mm.total.reduce((a,b)=>a+b,0);
     html+=`<tr class="mgroup"><td colspan="5">${y}年${+m}月　<span class="mgsub">合計 ${monthTotal}人</span></td></tr>`;
+    html+=axisRow(maxAvg, step, 3);   // 各月の見出し直後に目盛り
     order.forEach(w=>{
       const d=mm.days[w];
       const avgNum = d? mm.total[w]/d : 0;
@@ -669,7 +713,7 @@ function renderDOW(active){
       const we=(w===0||w===6);
       html+=`<tr>
         <td${we?' class="w7"':''}>${WD[w]}</td>
-        <td class="barcell"><span class="bar" style="width:${avgNum/maxAvg*100}%;${we?'background:var(--accent2)':''}"></span></td>
+        ${barTD(avgNum/maxAvg*100, gp, we?'background:var(--accent2)':'')}
         <td class="num-r">${mm.total[w]} 件</td>
         <td class="num-r">${d} 日</td>
         <td class="num-r">${avg}${d?' 人':''}</td>
@@ -689,6 +733,7 @@ function renderDay(active){
   const days=[];
   while(cur.getTime()<=end.getTime()){ days.push(cur.getTime()); cur=new Date(cur.getFullYear(),cur.getMonth(),cur.getDate()+1); }
   const max=Math.max(1,...Object.values(map));
+  const step=niceStep(max), gp=step/max*100;
 
   // 月ごとにまとめる
   const months={};
@@ -701,11 +746,12 @@ function renderDay(active){
     const total=months[ym].reduce((s,k)=>s+(map[k]||0),0);
     const openDays=months[ym].filter(k=>map[k]).length;
     html+=`<tr class="mgroup"><td colspan="3">${y}年${+m}月　<span class="mgsub">合計 ${total}人 / 営業${openDays}日</span></td></tr>`;
+    html+=axisRow(max, step, 1);   // 各月の見出し直後に目盛り
     months[ym].forEach(k=>{
       const d=new Date(k), w=d.getDay(), we=(w===0||w===6), c=map[k]||0;
       html+=`<tr${c===0?' class="zeroday"':''}>
         <td${we?' class="w7"':''}>${d.getMonth()+1}/${d.getDate()}(${WD[w]})</td>
-        <td class="barcell"><span class="bar" style="width:${c/max*100}%;${we?'background:var(--accent2)':''}"></span></td>
+        ${barTD(c/max*100, gp, we?'background:var(--accent2)':'')}
         <td class="num-r">${c} 人</td>
       </tr>`;
     });
