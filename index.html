@@ -205,7 +205,7 @@
   </div>
 </div>
 <div class="wrap">
-  <h1>来店集計 <span id="saveBadge" class="local">●</span> <span style="font-size:12px; color:#5c6773; font-weight:400;">v2026.06.09l</span></h1>
+  <h1>来店集計 <span id="saveBadge" class="local">●</span> <span style="font-size:12px; color:#5c6773; font-weight:400;">v2026.06.09m</span></h1>
   <div class="muted" id="introMuted">チェックインCSVをドラッグ＆ドロップ → 月ごと・曜日ごとの来店数を自動集計。サクラ（スタッフ）は除外できます。データはこのPC内だけで処理されます。</div>
 
   <div id="drop">
@@ -313,7 +313,7 @@ const $ = s => document.querySelector(s);
 const WD = ["日","月","火","水","木","金","土"];
 
 /* ---------- パスワードゲート（公開時のみ・ハッシュ照合で生パスワードを隠す） ---------- */
-const APP_PASSWORD_HASH = "4fe83ce8bcd89ccf71991f7aa7d89a409611d1e0cecbc472f0ee38270d288c41"; // 既定: raiten2026（変更可）
+const APP_PASSWORD_HASH = "3c68d7646ed256debc912b25ae3ddb835a8e323c190a70aa524d2d9499769c37"; // パスワードのSHA-256ハッシュ（生パスワードは載せない）
 async function sha256hex(s){
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
   return [...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,"0")).join("");
